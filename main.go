@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,20 +31,6 @@ tuiwitch vods <channel> [<offset>] - see latest vods
 //go:embed channel_list.txt
 var CHANNELS string
 
-// @TODO: Account for \r
-var CHANNEL_LIST = func () []string {
-	list := strings.Split(CHANNELS, "\n")
-	idx := 0
-	// filter out empty string and trim "\r"
-	for _, x := range list {
-		list[idx], _ = strings.CutSuffix(x, "\r")
-		if "" != list[idx] {
-			idx += 1
-		}
-	}
-	return list[:idx]
-}()
-
 //run: go run % f
 
 var STDIN_FD int
@@ -56,13 +43,11 @@ var CACHE = src.RingBuffer {
 	Latest: make(map[string]src.Video, src.RING_QUEUE_SIZE * 2),
 	Buffer: make([]src.Video, src.RING_QUEUE_SIZE),
 }
+var UI = tui.UIState{}
 
 // Plumbing (low-level) and porcelain (user-facing) are GIT developer terminology
 func main() {
 	src.Set_log_level(src.DEBUG)
-
-	// @TODO: Refactor this to work even when we run out of cache
-	src.Assert(len(CHANNEL_LIST) * src.PAGE_SIZE <= src.RING_QUEUE_SIZE)
 
 	{
 		list := make([]string, len(os.Args[1:]))
@@ -78,6 +63,9 @@ func main() {
 	} else {
 		cmd = os.Args[1]
 	}
+
+	UI.Load_follow_list(CHANNELS, &CACHE)
+	UI.Follow_videos = make([]src.Video, len(UI.Channel_list))
 
 	switch cmd {
 	case "interactive":
@@ -112,8 +100,8 @@ func main() {
 	case "f": fallthrough
 	case "follow":
 		var wg sync.WaitGroup
-		wg.Add(len(CHANNEL_LIST))
-		for _, channel := range CHANNEL_LIST {
+		wg.Add(len(UI.Channel_list))
+		for _, channel := range UI.Channel_list {
 			go func() {
 				CACHE.Query_channel(channel)
 				wg.Done()
@@ -121,41 +109,46 @@ func main() {
 		}
 		wg.Wait()
 
-		// Find latest video for each channel
-		for _, channel := range CHANNEL_LIST {
-			UI_MAP[channel] = src.Video{
-				Channel: channel,
-			}
+		//buffer_length := len(CACHE.Buffer)
+		idx := 0
+		for _, vid := range CACHE.Latest {
+			UI.Follow_videos[idx] = vid
+			idx += 1
 		}
-		buffer_length := len(CACHE.Buffer)
-		for i := CACHE.Start; i < CACHE.Close; i += 1 {
-			vid := CACHE.Buffer[i % buffer_length]
-			cur := UI_MAP[vid.Channel]
 
-			if vid.Is_live {
-				src.Assert(!cur.Is_live)
-				UI_MAP[vid.Channel] = vid
-			} else if vid.Start_time.After(cur.Start_time) {
-				UI_MAP[vid.Channel] = vid
+		slices.SortFunc(UI.Follow_videos, func(a, b src.Video) int {
+			less_than := false
+			if a.Is_live && b.Is_live {
+				// Shortest live first
+				less_than = a.Duration < b.Duration
+			} else if a.Is_live || b.Is_live {
+				less_than = a.Is_live // Live first, vod after
+			} else {
+				a_close := a.Start_time.Add(a.Duration)
+				b_close := b.Start_time.Add(b.Duration)
+				// Latest close time first
+				less_than = a_close.After(b_close)
 			}
-		}
+			if less_than {
+				return -1
+			} else {
+				return 0
+			}
+		})
 
 		choice, err := basic_menu(
 			"Follow list\n",
-			len(CHANNEL_LIST),
+			len(UI.Follow_videos),
 			"Enter a Video: ",
 			func (out io.Writer, idx int) {
-				tui.Print_formatted_line(out, " | ", UI_MAP[CHANNEL_LIST[idx]])
+				tui.Print_formatted_line(out, " | ", UI.Follow_videos[idx])
 			},
 		)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", err)
 			return
 		}
-
-		vid := UI_MAP[CHANNEL_LIST[choice]]
-		play(vid)
-		//choose(strings.NewReader(list.String()))
+		play(UI.Follow_videos[choice])
 
 	case "v": fallthrough
 	case "vods":
@@ -260,6 +253,3 @@ func basic_menu(header string, option_count int, prompt string, print_option fun
 		}
 	}
 }
-
-var UI_MAP = make(map[string]src.Video, len(CHANNEL_LIST) * 2)
-var UI_LIST = make([]src.Video, src.RING_QUEUE_SIZE)

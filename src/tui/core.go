@@ -11,6 +11,43 @@ import (
 	"github.com/yueleshia/tuiwitch/src"
 )
 
+const (
+	ScreenFollow int = iota
+)
+
+type UIState struct {
+	Height, Width int
+	Screen int
+	Channel_list []string
+
+	// Follow
+	Follow_selection int
+	Follow_videos []src.Video
+
+	Message string
+}
+
+// @TODO: Cater for reloading a channel list when there are lines in CACHE.Latest
+func (self *UIState) Load_follow_list(config string, cache *src.RingBuffer) {
+	list := strings.Split(config, "\n")
+	idx := 0
+	// filter out empty string and trim "\r"
+	for _, x := range list {
+		s, _ := strings.CutSuffix(x, "\r")
+		if "" != s {
+			cache.Latest[s] = src.Video{}
+			list[idx] = s
+			idx += 1
+		}
+	}
+
+	// @TODO: Refactor this to work even when we run out of cache
+	//        Maybe this is resolved RingBuffer.Latest
+	src.Assert(idx * src.PAGE_SIZE <= src.RING_QUEUE_SIZE)
+
+	self.Channel_list = list[:idx]
+}
+
 func Print_formatted_line(output io.Writer, gap string, video src.Video) {
 	sizes := []int{10, 30, 9, 6}
 
