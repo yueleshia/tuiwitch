@@ -149,6 +149,8 @@ func (self *UIState) Interactive(cache *src.RingBuffer) {
 			for {
 				if evt := parser.Next(); evt == nil {
 					break
+				} else if evt == nil {
+					break
 				} else {
 					input_queue <- *evt
 				}

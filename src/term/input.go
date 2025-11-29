@@ -69,6 +69,7 @@ func (self *InputParser) Next() *Event {
 	if 0 == len(*self) {
 		return nil
 	} else if '\x1B' == (*self)[0] {
+		self.advance(int8(len(*self)))
 		return &Event{ Ty: TyUnknown }
 	} else {
 		x := self.utf8()
