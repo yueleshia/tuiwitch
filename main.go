@@ -85,7 +85,25 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Invalid channel name %q", channel)
 			return
 		}
-		CACHE.Query_channel(channel)
+
+		{
+			jobs := []func (string) src.Result[[]src.Video]{
+				src.Graph_vods,
+				src.Scrape_live_status,
+			}
+			vid_chan := make(chan src.Result[[]src.Video], len(jobs))
+			for _, job := range jobs {
+				go func() { vid_chan <- job(channel) }()
+			}
+			for i := 0; i < len(jobs); i += 1 {
+				x := <-vid_chan
+				if videos, err := x.Val, x.Err; err != nil {
+					fmt.Fprintln(os.Stderr, err.Error())
+				} else {
+					CACHE.Add(videos)
+				}
+			}
+		}
 
 		cur := src.Video{}
 		buffer_length := len(CACHE.Buffer)
@@ -102,15 +120,30 @@ func main() {
 	case "follow":
 		var wg sync.WaitGroup
 		wg.Add(len(UI.Channel_list))
-		for _, channel := range UI.Channel_list {
-			go func() {
-				CACHE.Query_channel(channel)
-				wg.Done()
-			}()
-		}
-		wg.Wait()
 
-		//buffer_length := len(CACHE.Buffer)
+		{
+			jobs := []func (string) src.Result[[]src.Video]{
+				src.Graph_vods,
+				src.Scrape_live_status,
+			}
+			job_count := len(jobs) * len(UI.Channel_list)
+
+			vid_chan := make(chan src.Result[[]src.Video], job_count)
+			for _, channel := range UI.Channel_list {
+				for _, job := range jobs {
+					go func() { vid_chan <- job(channel) }()
+				}
+			}
+			for i := 0; i < job_count; i += 1 {
+				x := <-vid_chan
+				if videos, err := x.Val, x.Err; err != nil {
+					fmt.Fprintln(os.Stderr, err.Error())
+				} else {
+					CACHE.Add(videos)
+				}
+			}
+		}
+
 		idx := 0
 		for _, vid := range CACHE.Latest {
 			UI.Follow_videos[idx] = vid
@@ -139,7 +172,25 @@ func main() {
 			os.Exit(1)
 		}
 		channel := os.Args[2]
-		CACHE.Query_channel(channel)
+		{
+			jobs := []func (string) src.Result[[]src.Video]{
+				src.Graph_vods,
+				src.Scrape_live_status,
+			}
+			vid_chan := make(chan src.Result[[]src.Video], len(jobs))
+			for _, job := range jobs {
+				go func() { vid_chan <- job(channel) }()
+			}
+			for i := 0; i < len(jobs); i += 1 {
+				x := <-vid_chan
+				if videos, err := x.Val, x.Err; err != nil {
+					fmt.Fprintln(os.Stderr, err.Error())
+				} else {
+					CACHE.Add(videos)
+				}
+			}
+		}
+		slices.SortFunc(CACHE.Buffer[CACHE.Start:CACHE.Close], tui.Sort_videos_by_latest)
 
 		buffer_length := len(CACHE.Buffer)
 		choice, err := basic_menu(
@@ -147,7 +198,7 @@ func main() {
 			CACHE.Close - CACHE.Start,
 			"Enter a Video: ",
 			func (out io.Writer, idx int) {
-				vid := CACHE.Buffer[(CACHE.Start + idx) % buffer_length]
+				vid := CACHE.Buffer[(CACHE.Close - idx - 1) % buffer_length]
 				tui.Print_formatted_line(out, " | ", vid)
 			},
 		)
@@ -156,7 +207,7 @@ func main() {
 			return
 		}
 
-		vid := CACHE.Buffer[(CACHE.Start + choice) % buffer_length]
+		vid := CACHE.Buffer[(CACHE.Close - choice - 1) % buffer_length]
 		play(vid)
 
 		//var list strings.Builder

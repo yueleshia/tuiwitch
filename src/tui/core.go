@@ -21,8 +21,9 @@ type UIState struct {
 	Channel_list []string
 
 	// Follow
-	Follow_selection int
+	Follow_selection uint16
 	Follow_videos []src.Video
+	Refresh_queue chan src.Result[[]src.Video]
 
 	Message string
 }
@@ -163,7 +164,7 @@ func print_line(output io.Writer, gap string, sizes []int, cols []string) error 
 			if err != nil {
 				return err
 			}
-		} 
+		}
 	}
 	n, err := output.Write([]byte{'\n'})
 	if n != 1 {

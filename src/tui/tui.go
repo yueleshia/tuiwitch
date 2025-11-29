@@ -117,72 +117,114 @@ func (self *UIState) Interactive(cache *src.RingBuffer) {
 		src.Must1(writer.Flush())
 	}()
 
-	if err := term.Sys_set_nonblock(STDIN_FD, true); err != nil {
-		return
-	}
+	//// Busy loop if set to non-blocking
+	//if err := term.Sys_set_nonblock(STDIN_FD, true); err != nil {
+	//	return
+	//}
 
 	////////////////////////////////////////////////////////////////////////////
 	// Setup inital screen
 
 	render(writer, *self)
+	src.Must1(writer.Flush())
+
 	refresh_queue := make(chan bool, 100)
-	for _, channel := range self.Channel_list {
-		go func() {
-			cache.Query_channel(channel)
-			refresh_queue <- true
-		}()
-	}
+	self.Refresh_queue = make(chan src.Result[[]src.Video], 100)
+	self.refresh_channels(self.Channel_list...)
+
+	// Setup input loop
+	// We do not want tob lock the main loop, so that we can have async updates
+	// But we also cannot set the stdin to be non-blocking so we do not busy loop
+	input_queue_size := 32
+	input_queue := make(chan term.Event, input_queue_size)
+	go func () {
+		var buffer [32]byte
+		for {
+			var parser term.InputParser
+			if n, err := term.Sys_read(STDIN_FD, buffer[:]); err != nil || n < 1 {
+				continue
+			} else {
+				parser = buffer[:n]
+			}
+			for {
+				if evt := parser.Next(); evt == nil {
+					break
+				} else {
+					input_queue <- *evt
+				}
+			}
+		}
+	}()
 
 	////////////////////////////////////////////////////////////////////////////
-	// Main loop
-	input_buffer := make([]byte, 32)
-	src.Must1(writer.Flush())
-	outer: for {
+
+	main_loop: for {
 		select {
-		case <-ctx.Done(): break outer
+		case <-ctx.Done(): break main_loop
 		case <-refresh_queue:
+
+		case x := <-self.Refresh_queue:
+			if videos, err := x.Val, x.Err; err != nil {
+				self.Message = self.Message + "\r\n" + err.Error()
+			} else {
+				cache.Add(videos)
+			}
+
 			idx := 0
 			for _, vid := range cache.Latest {
 				self.Follow_videos[idx] = vid
 				idx += 1
 			}
 			slices.SortFunc(self.Follow_videos, Sort_videos_by_latest)
-
-			self.Message = "Refreshed"
-		default:
-			var buf []byte
-			if n, err := term.Sys_read(STDIN_FD, input_buffer); err != nil || n < 1 {
-				continue
-			} else {
-				buf = input_buffer[:n]
+		case event := <- input_queue:
+			is_break := false
+			switch (self.Screen) {
+			case ScreenFollow: is_break = self.screen_follow_input(event, cancel)
+			default: panic("DEV: Unsupport screen")
 			}
 
-
-			var parser term.InputParser = buf
-			var event term.Event
-			for {
-				if evt := parser.Next(); evt == nil {
-					break
-				} else {
-					event = *evt
-				}
-
-				switch (self.Screen) {
-				case ScreenFollow:
-					if self.screen_follow_input(event, cancel) {
-						break
-					}
-				default: panic("DEV: Unsupport screen")
-				}
+			if is_break {
+				break main_loop
 			}
 		}
 
 		render(writer, *self)
 	}
 }
+func (self *UIState) refresh_channels(channels ...string) {
+	for _, channel := range self.Channel_list {
+		go func() { self.Refresh_queue <- src.Graph_vods(channel) }()
+		go func() { self.Refresh_queue <- src.Scrape_live_status(channel) }()
+	}
+}
 
-func (ui *UIState) screen_follow_input(event term.Event, cancel context.CancelFunc) bool {
-	ui.Message = ""
+func render(writer *bufio.Writer, ui UIState) {
+	fmt.Fprint(writer, term.Clear + "\x1B[1;1H")
+	switch ui.Screen {
+	case ScreenFollow: ui.screen_follow_render(writer)
+	default: panic("DEV: Unsupport screen")
+	}
+	src.Must1(writer.Flush())
+}
+
+func render_video_list(writer *bufio.Writer, selection uint16, videos []src.Video) {
+	for i := uint16(0); int(i) < len(videos); i += 1 {
+		fmt.Fprintf(writer, "\x1B[%d;1H", i + 2)
+		if i == selection {
+			fmt.Fprintf(writer, "\x1B[0;%s%s;%s%sm", term.Part_foreground, term.Part_white, term.Part_background, term.Part_black)
+		}
+		Print_formatted_line(writer, " | ", videos[i])
+		if i == selection {
+			fmt.Fprintf(writer, term.Reset_attributes)
+		}
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Follow screen
+
+func (self *UIState) screen_follow_input(event term.Event, cancel context.CancelFunc) bool {
+	self.Message = ""
 	switch event.Ty {
 	case term.TyCodepoint:
 		switch event.X {
@@ -194,64 +236,50 @@ func (ui *UIState) screen_follow_input(event term.Event, cancel context.CancelFu
 		case 'q':
 			cancel()
 			return true
+
+		case 'r':
+			self.refresh_channels(self.Channel_list...)
+			
 		case 'j':
-			if ui.Follow_selection < len(ui.Follow_videos) {
-				ui.Follow_selection += 1
+			if int(self.Follow_selection) < len(self.Follow_videos) {
+				self.Follow_selection += 1
 			}
 		case 'k':
-			if ui.Follow_selection > 0 {
-				ui.Follow_selection -= 1
+			if int(self.Follow_selection) > 0 {
+				self.Follow_selection -= 1
 			}
 		case 'l':
-			if len(ui.Follow_videos) > 0 {
+			if len(self.Follow_videos) > 0 {
 				ctx, cancel := context.WithCancel(context.Background())
-				vid := ui.Follow_videos[ui.Follow_selection]
+				vid := self.Follow_videos[self.Follow_selection]
 				if vid.Is_live {
 					go streamlink(ctx, "https://www.twitch.tv/" + vid.Channel)
 				}
 				_ = cancel
 			}
+		case '0','1','2','3','4','5','6','7','8','9':
 
 		default:
-			ui.Message = fmt.Sprintf("%d %+v", event.Ty, event)
+			self.Message = fmt.Sprintf("%d %+v", event.Ty, event)
 		}
 	default:
-		ui.Message = fmt.Sprintf("%d %+v", event.Ty, event)
+		self.Message = fmt.Sprintf("%d %+v", event.Ty, event)
 	}
 	return false
 }
 
-func (ui UIState) screen_follow_render(writer *bufio.Writer) {
-	height_left := ui.Height
+func (self UIState) screen_follow_render(writer *bufio.Writer) {
+	height_left := self.Height
 	fmt.Fprint(writer, "Follow\n")
 	height_left -= 1
 
-	max_count := height_left
-	if len(ui.Follow_videos) < max_count {
-		max_count = len(ui.Follow_videos)
+	to_render := self.Follow_videos
+	if len(to_render) < height_left - 2 {
+		to_render = to_render[:len(to_render)]
 	}
-	for i := 0; i < max_count; i += 1 {
-		fmt.Fprintf(writer, "\x1B[%d;1H", i + 2)
-		if i == ui.Follow_selection {
-			fmt.Fprintf(writer, "\x1B[0;%s%s;%s%sm", term.Part_foreground, term.Part_white, term.Part_background, term.Part_black)
-		}
-		Print_formatted_line(writer, " | ", ui.Follow_videos[i])
-		if i == ui.Follow_selection {
-			fmt.Fprintf(writer, term.Reset_attributes)
-		}
-		height_left -= 1
-	}
-	fmt.Fprintf(writer, "\rui_selection: %d", ui.Follow_selection)
-	fmt.Fprintf(writer, "\n\r%s", ui.Message)
-}
+	render_video_list(writer, self.Follow_selection, to_render)
 
-
-func render(writer *bufio.Writer, ui UIState) {
-	fmt.Fprint(writer, term.Clear + "\x1B[1;1H")
-	switch ui.Screen {
-	case ScreenFollow:
-		ui.screen_follow_render(writer)
-	}
-	src.Must1(writer.Flush())
+	fmt.Fprintf(writer, "\rui_selection: %d", self.Follow_selection)
+	fmt.Fprintf(writer, "\n\r%s", self.Message)
 }
 

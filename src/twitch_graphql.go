@@ -43,9 +43,7 @@ var VODS_GRAPHQL_QUERY = strings.ReplaceAll(`query FilterableVideoTower_Videos($
         }
     }
 }`, "\n", "")
-func Graph_vods(channel string) ([]Video, error) {
-	_ = channel
-
+func Graph_vods(channel string) Result[[]Video] {
 	// url format https://www.twitch.tv/qtcinderella/videos?filter=all&sort=time (query params may or may not be there)
 	variables := strings.Join([]string{
 		`{`,
@@ -78,7 +76,7 @@ func Graph_vods(channel string) ([]Video, error) {
 			//"Device-ID": void 0,
 		}, strings.NewReader(query), "https://gql.twitch.tv/gql#origin=twilight", fmt.Sprintf("graph-%s-videos", channel))
 		if err != nil {
-			return videos[:0], err
+			return Result[[]Video]{videos[:0], err}
 		}
 		request = x
 	}
@@ -163,7 +161,7 @@ func Graph_vods(channel string) ([]Video, error) {
 		return videos[:idx], nil
 	}()
 	if err != nil {
-		return videos[:0], err
+		return Result[[]Video]{videos[:0], err}
 	}
-	return ret, request.Close()
+	return Result[[]Video]{ret, request.Close()}
 }
