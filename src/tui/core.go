@@ -28,6 +28,11 @@ type UIState struct {
 	Follow_selection uint16
 	Follow_videos []src.Video
 
+	// Channel screen
+	Channel string
+	Channel_selection uint16
+	Channel_videos []src.Video
+
 	Message string
 }
 
@@ -68,6 +73,7 @@ func (self *UIState) Load_config(config string) {
 
 	self.Channel_list = list[:count]
 	self.Follow_videos = set_len(self.Follow_videos, count)
+	self.Channel_videos = set_len(self.Channel_videos, count)
 
 	self.Cache.Buffer = set_len(self.Cache.Buffer, src.RING_QUEUE_SIZE)
 	if self.Cache.Latest == nil {
@@ -84,6 +90,7 @@ func (self *UIState) Load_config(config string) {
 			Title: "Pending...",
 		}
 		self.Follow_videos[i] = blank
+		self.Channel_videos[i] = blank
 		self.Cache.Latest[channel] = blank
 	}
 }

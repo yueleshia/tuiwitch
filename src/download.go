@@ -16,6 +16,9 @@ func Is_similar_time(a, b time.Time) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// @TODO: Check if using a BTreeMap would be faster than a ring buffer
+//        This is relevant for the channel list in interactive
+
 // Our basic algorithm is start..close are valid index
 // Once close has passed len(Buffer), it will always be len + idx, thus close is
 // always a > start. It is on the usage code to do a modulus.
@@ -65,3 +68,10 @@ func (self *RingBuffer) Add(items []Video) {
 	self.Start %= length
 }
 
+func (self *RingBuffer) As_slice() []Video {
+	if self.Close <= len(self.Buffer) {
+		return self.Buffer[:self.Close]
+	} else {
+		return self.Buffer
+	}
+}

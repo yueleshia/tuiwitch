@@ -171,17 +171,20 @@ func (self *UIState) Interactive(cache *src.RingBuffer) {
 			} else {
 				cache.Add(videos)
 			}
-
-			idx := 0
-			for _, vid := range cache.Latest {
-				self.Follow_videos[idx] = vid
-				idx += 1
-			}
 			slices.SortFunc(self.Follow_videos, Sort_videos_by_latest)
+
+			switch (self.Screen) {
+			case ScreenFollow: self.follow_swap()
+			case ScreenChannel: self.channel_swap(self.Channel)
+			default: panic("DEV: Unsupport screen")
+			}
+
+
 		case event := <- input_queue:
 			is_break := false
 			switch (self.Screen) {
-			case ScreenFollow: is_break = self.screen_follow_input(event, cancel)
+			case ScreenFollow: is_break = self.follow_input(event, cancel)
+			case ScreenChannel: is_break = self.channel_input(event, cancel)
 			default: panic("DEV: Unsupport screen")
 			}
 
@@ -203,7 +206,8 @@ func (self *UIState) refresh_channels(channels ...string) {
 func render(writer *bufio.Writer, ui UIState) {
 	fmt.Fprint(writer, term.Clear + "\x1B[1;1H")
 	switch ui.Screen {
-	case ScreenFollow: ui.screen_follow_render(writer)
+	case ScreenFollow: ui.follow_render(writer)
+	case ScreenChannel: ui.channel_render(writer)
 	default: panic("DEV: Unsupport screen")
 	}
 	src.Must1(writer.Flush())
@@ -225,7 +229,18 @@ func render_video_list(writer *bufio.Writer, selection uint16, videos []src.Vide
 ////////////////////////////////////////////////////////////////////////////////
 // Follow screen
 
-func (self *UIState) screen_follow_input(event term.Event, cancel context.CancelFunc) bool {
+func (self *UIState) follow_swap() {
+	self.Screen = ScreenFollow
+
+	var idx uint = 0
+	for _, vid := range self.Cache.Latest {
+		self.Follow_videos[idx] = vid
+		idx += 1
+	}
+	slices.SortFunc(self.Follow_videos, Sort_videos_by_latest)
+}
+
+func (self *UIState) follow_input(event term.Event, cancel context.CancelFunc) bool {
 	self.Message = ""
 	switch event.Ty {
 	case term.TyCodepoint:
@@ -251,15 +266,8 @@ func (self *UIState) screen_follow_input(event term.Event, cancel context.Cancel
 				self.Follow_selection -= 1
 			}
 		case 'l':
-			if len(self.Follow_videos) > 0 {
-				ctx, cancel := context.WithCancel(context.Background())
-				vid := self.Follow_videos[self.Follow_selection]
-				if vid.Is_live {
-					go streamlink(ctx, "https://www.twitch.tv/" + vid.Channel)
-				}
-				_ = cancel
-			}
-		case '0','1','2','3','4','5','6','7','8','9':
+			vid := self.Follow_videos[self.Follow_selection]
+			self.channel_swap(vid.Channel)
 
 		default:
 			self.Message = fmt.Sprintf("%d %+v", event.Ty, event)
@@ -270,7 +278,7 @@ func (self *UIState) screen_follow_input(event term.Event, cancel context.Cancel
 	return false
 }
 
-func (self UIState) screen_follow_render(writer *bufio.Writer) {
+func (self UIState) follow_render(writer *bufio.Writer) {
 	height_left := self.Height
 	fmt.Fprint(writer, "Follow\n")
 	height_left -= 1
@@ -285,3 +293,90 @@ func (self UIState) screen_follow_render(writer *bufio.Writer) {
 	fmt.Fprintf(writer, "\n\r%s", self.Message)
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Channel screen
+
+func (self *UIState) channel_swap(channel string) {
+	self.Screen = ScreenChannel
+	self.Channel = channel
+
+	var idx uint = 0
+	for _, vid := range self.Cache.As_slice() {
+		if vid.Channel == self.Channel {
+			self.Channel_videos[idx] = vid
+			idx += 1
+		}
+		if int(idx) >= self.Height - 2 || int(idx) >= len(self.Channel_videos) {
+			break
+		}
+	}
+	slices.SortFunc(self.Channel_videos, Sort_videos_by_latest)
+
+}
+
+func (self UIState) channel_render(writer *bufio.Writer) {
+	height_left := self.Height
+	fmt.Fprintf(writer, "Channel %s\n", self.Channel)
+	height_left -= 1
+
+	to_render := self.Channel_videos
+	if len(to_render) < height_left - 2 {
+		to_render = to_render[:len(to_render)]
+	}
+	render_video_list(writer, self.Channel_selection, to_render)
+
+	fmt.Fprintf(writer, "\rui_selection: %d", self.Channel_selection)
+	fmt.Fprintf(writer, "\n\r%s", self.Message)
+}
+
+func (self *UIState) channel_input(event term.Event, cancel context.CancelFunc) bool {
+	self.Message = ""
+	switch event.Ty {
+	case term.TyCodepoint:
+		switch event.X {
+		case 'c':
+			if event.Mod_ctrl {
+				cancel()
+				return true
+			}
+		case 'q':
+			cancel()
+			return true
+
+		case 'r':
+			self.refresh_channels(self.Channel_list...)
+			
+		case 'h':
+			for i, vid := range self.Follow_videos {
+				if vid.Channel == self.Channel {
+					self.Follow_selection = uint16(i)
+					break
+				}
+			}
+			self.Screen = ScreenFollow
+
+		case 'j':
+			if int(self.Channel_selection) + 1 < len(self.Channel_videos) {
+				self.Channel_selection += 1
+			}
+		case 'k':
+			if self.Channel_selection > 0 {
+				self.Channel_selection -= 1
+			}
+		case 'l':
+			if len(self.Channel_videos) > 0 {
+				ctx, cancel := context.WithCancel(context.Background())
+				vid := self.Channel_videos[self.Channel_selection]
+				go streamlink(ctx, "https://www.twitch.tv/" + vid.Channel)
+				_ = cancel
+			}
+		case '0','1','2','3','4','5','6','7','8','9':
+
+		default:
+			self.Message = fmt.Sprintf("%d %+v", event.Ty, event)
+		}
+	default:
+		self.Message = fmt.Sprintf("%d %+v", event.Ty, event)
+	}
+	return false
+}
