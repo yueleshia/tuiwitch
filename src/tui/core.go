@@ -23,6 +23,7 @@ type UIState struct {
 
 	Cache RingBuffer
 	Refresh_queue chan src.Result[[]src.Video]
+	Log_queue chan []byte
 
 	// Follow screen
 	Follow_latest map[string]src.Video
@@ -34,7 +35,7 @@ type UIState struct {
 	Channel_selection uint16
 	Channel_videos RingBuffer
 
-	Message string
+	Message strings.Builder
 }
 
 func set_len[T any](slice []T, target_len int) []T {
@@ -71,6 +72,9 @@ func (self *UIState) Load_config(config string) {
 	// @TODO: Refactor this to work even when we run out of cache
 	//        Maybe this is resolved RingBuffer.Latest
 	src.Assert(count * src.PAGE_SIZE <= src.RING_QUEUE_SIZE)
+
+	self.Refresh_queue = make(chan src.Result[[]src.Video], 100)
+	self.Log_queue = make(chan []byte, 100)
 
 	self.Channel_list = list[:count]
 	self.Follow_videos = set_len(self.Follow_videos, count)

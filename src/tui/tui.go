@@ -5,9 +5,9 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"os"
 
-	"bytes"
 	"io"
 	"os/exec"
 
@@ -19,7 +19,7 @@ import (
 
 //run: go run ../../main.go
 
-func streamlink(ctx context.Context, args ...string) error {
+func streamlink(ctx context.Context, output chan []byte, args ...string) error {
 	cmd := exec.CommandContext(ctx, "streamlink", args...)
 
 	var stdout, stderr io.ReadCloser
@@ -51,33 +51,10 @@ func streamlink(ctx context.Context, args ...string) error {
 				break
 			}
 		}
-		channel <- nil
 	}
 
-	messages := make(chan []byte)
-	go stream_input(messages, stdout)
-	go stream_input(messages, stderr)
-
-	count := 2
-	var output = make([]byte, 0, 4096) // Streamlink with no errors is prety short
-	for {
-		msg := <-messages
-		if msg == nil {
-			count -= 1
-			if count == 0 {
-				break
-			}
-		}
-		output = append(output, msg...)
-		idx := 0
-		for j := 0; j > 0; j = bytes.IndexByte(output[idx:], '\n') {
-			fmt.Fprint(os.Stderr, string(output[idx:][:j]))
-			fmt.Fprint(os.Stderr, "\r")
-			idx += j
-		}
-		fmt.Fprint(os.Stderr, string(output[idx:]))
-	}
-
+	go stream_input(output, stdout)
+	go stream_input(output, stderr)
 	return cmd.Wait()
 }
 
@@ -165,9 +142,14 @@ func (self *UIState) Interactive() {
 		case <-ctx.Done(): break main_loop
 		case <-refresh_queue:
 
+		case message := <-self.Log_queue:
+			fmt.Println("hello")
+			_, _ = self.Message.Write(message)
+
 		case x := <-self.Refresh_queue:
 			if videos, err := x.Val, x.Err; err != nil {
-				self.Message = self.Message + "\r\n" + err.Error()
+				_, _ = self.Message.WriteString(err.Error())
+				_ = self.Message.WriteByte('\n')
 			} else {
 				self.Add_and_update_follow(videos)
 			}
@@ -226,6 +208,12 @@ func render_video_list(writer *bufio.Writer, selection uint16, videos []src.Vide
 	}
 }
 
+func render_message(writer *bufio.Writer, message string) {
+	for part := range strings.SplitSeq(message, "\n") {
+		fmt.Fprintf(writer, "%s\r\n", part)
+	}
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Follow screen
 
@@ -241,7 +229,7 @@ func (self *UIState) follow_swap() {
 }
 
 func (self *UIState) follow_input(event term.Event, cancel context.CancelFunc) bool {
-	self.Message = ""
+	self.Message.Reset()
 	switch event.Ty {
 	case term.TyCodepoint:
 		switch event.X {
@@ -270,10 +258,10 @@ func (self *UIState) follow_input(event term.Event, cancel context.CancelFunc) b
 			self.channel_swap(vid.Channel)
 
 		default:
-			self.Message = fmt.Sprintf("%d %+v", event.Ty, event)
+			self.Message.WriteString(fmt.Sprintf("%d %+v\n", event.Ty, event))
 		}
 	default:
-		self.Message = fmt.Sprintf("%d %+v", event.Ty, event)
+		self.Message.WriteString(fmt.Sprintf("%d %+v\n", event.Ty, event))
 	}
 	return false
 }
@@ -291,8 +279,9 @@ func (self UIState) follow_render(writer *bufio.Writer) {
 
 	fmt.Fprintf(writer, "\r\n (q)uit (r)efresh (hjkl) navigate")
 	fmt.Fprintf(writer, "\r\n")
-	fmt.Fprintf(writer, "\r\nui_selection: %d", self.Follow_selection)
-	fmt.Fprintf(writer, "\r\n%s", self.Message)
+	fmt.Fprintf(writer, "\r\nui_selection: %d\r\n", self.Follow_selection)
+	fmt.Fprintf(writer, "\r\n")
+	render_message(writer, self.Message.String())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -311,25 +300,8 @@ func (self *UIState) channel_swap(channel string) {
 	slices.SortFunc(self.Channel_videos.As_slice(), src.Sort_videos_by_latest)
 }
 
-func (self UIState) channel_render(writer *bufio.Writer) {
-	height_left := self.Height
-	fmt.Fprintf(writer, "Channel %s\n", self.Channel)
-	height_left -= 1
-
-	to_render := self.Channel_videos.As_slice()
-	if len(to_render) < height_left - 2 {
-		to_render = to_render[:len(to_render)]
-	}
-	render_video_list(writer, self.Channel_selection, to_render)
-
-	fmt.Fprintf(writer, "\r\n (q)uit (r)efresh (hjkl) navigate")
-	fmt.Fprintf(writer, "\r\n")
-	fmt.Fprintf(writer, "\r\nui_selection: %d", self.Channel_selection)
-	fmt.Fprintf(writer, "\r\n%s", self.Message)
-}
-
 func (self *UIState) channel_input(event term.Event, cancel context.CancelFunc) bool {
-	self.Message = ""
+	self.Message.Reset()
 	switch event.Ty {
 	case term.TyCodepoint:
 		switch event.X {
@@ -366,18 +338,39 @@ func (self *UIState) channel_input(event term.Event, cancel context.CancelFunc) 
 			if len(self.Channel_videos.Buffer) > 0 {
 				ctx, cancel := context.WithCancel(context.Background())
 				vid := self.Channel_videos.Buffer[self.Channel_selection]
-				self.Message = vid.Url
-				go streamlink(ctx, vid.Url)
+				_, _ = self.Message.WriteString(vid.Url)
+				_ = self.Message.WriteByte('\n')
+				go streamlink(ctx, self.Log_queue, vid.Url)
 				_ = cancel
 			}
 		case '0','1','2','3','4','5','6','7','8','9':
 
 		default:
-			self.Message = self.Channel_videos.Buffer[self.Channel_selection].Url
+			_, _ = self.Message.WriteString(self.Channel_videos.Buffer[self.Channel_selection].Url)
+			_ = self.Message.WriteByte('\n')
 		}
 	default:
-		self.Message = fmt.Sprintf("%d %+v", event.Ty, event)
-		self.Message = self.Channel_videos.Buffer[self.Channel_selection].Url
+		self.Message.WriteString(fmt.Sprintf("%d %+v\n", event.Ty, event))
+		self.Message.WriteString(self.Channel_videos.Buffer[self.Channel_selection].Url)
+		_ = self.Message.WriteByte('\n')
 	}
 	return false
+}
+
+func (self UIState) channel_render(writer *bufio.Writer) {
+	height_left := self.Height
+	fmt.Fprintf(writer, "Channel %s\n", self.Channel)
+	height_left -= 1
+
+	to_render := self.Channel_videos.As_slice()
+	if len(to_render) < height_left - 2 {
+		to_render = to_render[:len(to_render)]
+	}
+	render_video_list(writer, self.Channel_selection, to_render)
+
+	fmt.Fprintf(writer, "\r\n (q)uit (r)efresh (hjkl) navigate")
+	fmt.Fprintf(writer, "\r\n")
+	fmt.Fprintf(writer, "\r\nui_selection: %d", self.Channel_selection)
+	fmt.Fprintf(writer, "\r\n")
+	render_message(writer, self.Message.String())
 }
