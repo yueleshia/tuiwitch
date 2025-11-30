@@ -63,7 +63,7 @@ func main() {
 	switch cmd {
 	case "interactive":
 		src.Set_log_level(io.Discard, src.DEBUG)
-		UI.Interactive(&UI.Cache)
+		UI.Interactive()
 
 	case "o": fallthrough
 	case "open":
@@ -92,7 +92,7 @@ func main() {
 				if videos, err := x.Val, x.Err; err != nil {
 					fmt.Fprintln(os.Stderr, err.Error())
 				} else {
-					UI.Cache.Add(videos)
+					UI.Add_and_update_follow(videos)
 				}
 			}
 		}
@@ -131,13 +131,13 @@ func main() {
 				if videos, err := x.Val, x.Err; err != nil {
 					fmt.Fprintln(os.Stderr, err.Error())
 				} else {
-					UI.Cache.Add(videos)
+					UI.Add_and_update_follow(videos)
 				}
 			}
 		}
 
 		idx := 0
-		for _, vid := range UI.Cache.Latest {
+		for _, vid := range UI.Follow_latest {
 			UI.Follow_videos[idx] = vid
 			idx += 1
 		}
@@ -178,7 +178,7 @@ func main() {
 				if videos, err := x.Val, x.Err; err != nil {
 					fmt.Fprintln(os.Stderr, err.Error())
 				} else {
-					UI.Cache.Add(videos)
+					UI.Add_and_update_follow(videos)
 				}
 			}
 		}

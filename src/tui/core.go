@@ -21,10 +21,11 @@ type UIState struct {
 	Screen int
 	Channel_list []string
 
-	Cache src.RingBuffer
+	Cache RingBuffer
 	Refresh_queue chan src.Result[[]src.Video]
 
 	// Follow screen
+	Follow_latest map[string]src.Video
 	Follow_selection uint16
 	Follow_videos []src.Video
 
@@ -76,12 +77,12 @@ func (self *UIState) Load_config(config string) {
 	self.Channel_videos = set_len(self.Channel_videos, count)
 
 	self.Cache.Buffer = set_len(self.Cache.Buffer, src.RING_QUEUE_SIZE)
-	if self.Cache.Latest == nil {
+	if self.Follow_latest == nil {
 		// You typically want 70% fullness for hash maps
 		// Although we wrap around (so we could add up to 2 * RING_QUEUE_SIZE)
 		// before deleting elements, we typically typically are only adding vidoes
 		// 10 at a time, so 1.3 * BUFFER_SIZE would be enough
-		self.Cache.Latest = make(map[string]src.Video, src.RING_QUEUE_SIZE * 2)
+		self.Follow_latest = make(map[string]src.Video, src.RING_QUEUE_SIZE * 2)
 	}
 
 	for i, channel := range list[:count] {
@@ -91,7 +92,9 @@ func (self *UIState) Load_config(config string) {
 		}
 		self.Follow_videos[i] = blank
 		self.Channel_videos[i] = blank
-		self.Cache.Latest[channel] = blank
+
+		// @VOLATILE: Add_and_update_follow depends on this
+		self.Follow_latest[channel] = blank
 	}
 }
 
@@ -243,3 +246,72 @@ func is_ASCII(s string) bool {
 	return true
 }
 
+//run: go run ../../main.go
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (self *UIState) Add_and_update_follow(videos []src.Video) {
+	self.Cache.Add(videos)
+	// @VOLATILE: Depends on Update_config seeding Follow_latest with the channel names
+	for _, vid := range videos {
+		// If one of the channels we follow
+		if las, ok := self.Follow_latest[vid.Channel]; ok {
+			vid_close_time := vid.Start_time.Add(vid.Duration)
+			las_close_time := las.Start_time.Add(las.Duration)
+
+			if vid.Is_live {
+				self.Follow_latest[vid.Channel] = vid
+			} else if src.Is_similar_time(vid.Start_time, las.Start_time) {
+				vid.Is_live = las.Is_live
+				self.Follow_latest[vid.Channel] = vid
+			} else if vid_close_time.After(las_close_time) {
+				self.Follow_latest[vid.Channel] = vid
+			}
+		}
+	}
+}
+
+
+// @TODO: Check if using a BTreeMap would be faster than a ring buffer
+//        This is relevant for the channel list in interactive
+
+// Our basic algorithm is start..close are valid index
+// Once close has passed len(Buffer), it will always be len + idx, thus close is
+// always a > start. It is on the usage code to do a modulus.
+type RingBuffer struct {
+	Buffer []src.Video
+	Start int
+	Close int
+	Wrapped bool
+}
+func (self *RingBuffer) Add(videos []src.Video) {
+	length := len(self.Buffer)
+
+	//if self.Close >= length {
+	//	for i := 0; i < len(videos); i += 1 {
+	//		delete(self.Latest, self.Buffer[(self.Close + i) % length].Url)
+	//	}
+	//}
+	for _, vid := range videos {
+		//if _, ok := self.Latest[vid.Url]; ok {
+		//	continue
+		//} else {
+		//	self.Latest[vid.Url] = vid
+		//}
+		self.Buffer[self.Close % length] = vid
+		self.Close += 1
+	}
+	if self.Close > length {
+		self.Close = (self.Close % length) + length
+		self.Start = self.Close
+	}
+	self.Start %= length
+}
+
+func (self *RingBuffer) As_slice() []src.Video {
+	if self.Close <= len(self.Buffer) {
+		return self.Buffer[:self.Close]
+	} else {
+		return self.Buffer
+	}
+}

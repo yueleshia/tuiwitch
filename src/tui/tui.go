@@ -81,7 +81,7 @@ func streamlink(ctx context.Context, args ...string) error {
 	return cmd.Wait()
 }
 
-func (self *UIState) Interactive(cache *src.RingBuffer) {
+func (self *UIState) Interactive() {
 	////////////////////////////////////////////////////////////////////////////
 	// Setup
 	writer := bufio.NewWriter(os.Stdout)
@@ -169,7 +169,7 @@ func (self *UIState) Interactive(cache *src.RingBuffer) {
 			if videos, err := x.Val, x.Err; err != nil {
 				self.Message = self.Message + "\r\n" + err.Error()
 			} else {
-				cache.Add(videos)
+				self.Add_and_update_follow(videos)
 			}
 			slices.SortFunc(self.Follow_videos, Sort_videos_by_latest)
 
@@ -233,7 +233,7 @@ func (self *UIState) follow_swap() {
 	self.Screen = ScreenFollow
 
 	var idx uint = 0
-	for _, vid := range self.Cache.Latest {
+	for _, vid := range self.Follow_latest {
 		self.Follow_videos[idx] = vid
 		idx += 1
 	}

@@ -4,6 +4,10 @@ import (
 	"time"
 )
 
+// Customise runtime behaviour
+const IS_CLEAR = false // Remove old local files
+const IS_LOCAL = false // Use local files on second run instead of issuing network requests
+
 var CLIENT_ID = "ue6666qo983tsx6so1t0vnawi233wa" // old: kimne78kx3ncx6brgo4mv6wki5h1ko
 var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36"
 

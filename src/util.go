@@ -8,13 +8,11 @@ import (
 	"log"
 	"runtime"
 	"strings"
+	"time"
 	"os"
 	"os/exec"
 	"path/filepath"
 )
-
-const IS_CLEAR = false
-const IS_LOCAL = false
 
 type ErrMissing struct {
 	message string
@@ -36,6 +34,23 @@ func Run(input io.Reader, output io.Writer, name string, arg ...string) error {
 	return nil
 }
 
+type Result[T any] struct {
+	Val T
+	Err error
+}
+
+func Is_similar_time(a, b time.Time) bool {
+	delta := a.Sub(b)
+	return -5 * time.Minute < delta && delta < 5 * time.Minute
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Network wraper
+
+func local_shim(filename string) string {
+	root := Must(find_go_root())
+	return filepath.Join(root, "tmp", strings.ReplaceAll(filename, "/", "-"))
+}
 
 var http_client = &http.Client{}
 func Request(ctx context.Context, method string, headers map[string]string, body io.Reader, target string, cache_id string) (io.ReadCloser, error) {
@@ -87,7 +102,8 @@ func Request(ctx context.Context, method string, headers map[string]string, body
 	}
 }
 
-
+////////////////////////////////////////////////////////////////////////////////
+// Logging
 var L_TRACE = log.New(io.Discard, "", 0)
 var L_DEBUG = log.New(io.Discard, "", 0)
 var L_INFO = log.New(io.Discard, "", 0)
@@ -110,12 +126,9 @@ func Set_log_level(writer io.Writer, log_level uint) {
 	if log_level <= ERROR { L_ERROR = log.New(writer, "", log.Lshortfile) }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Assert
 
-
-func local_shim(filename string) string {
-	root := Must(find_go_root())
-	return filepath.Join(root, "tmp", strings.ReplaceAll(filename, "/", "-"))
-}
 func Must[T any](x T, err error) T {
 	if err != nil {
 		fmt.Println(err.Error())
