@@ -110,7 +110,7 @@ var L_INFO = log.New(io.Discard, "", 0)
 var L_ERROR = log.New(io.Discard, "", 0)
 var L_FATAL = log.New(os.Stderr, "", 0)
 const (
-	TRACE uint = iota 
+	TRACE uint = iota
 	DEBUG
 	INFO
 	WARN

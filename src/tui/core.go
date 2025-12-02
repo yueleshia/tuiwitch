@@ -21,7 +21,7 @@ type UIState struct {
 	Screen int
 	Channel_list []string
 
-	Cache RingBuffer
+	Cache LRU
 	Refresh_queue chan src.Result[[]src.Video]
 	Log_queue chan []byte
 
@@ -84,12 +84,15 @@ func (self *UIState) Load_config(config string) {
 	self.Channel_command = set_len(self.Channel_command, 100)
 
 	self.Cache.Buffer = set_len(self.Cache.Buffer, src.RING_QUEUE_SIZE)
+	// You typically want 70% fullness for hash maps
+	// Although we wrap around (so we could add up to 2 * RING_QUEUE_SIZE)
+	// before deleting elements, we typically typically are only adding vidoes
+	// 10 at a time, so 1.3 * BUFFER_SIZE would be enough
+	if self.Cache.Exists == nil {
+		self.Cache.Exists = make(map[string]int, src.RING_QUEUE_SIZE * 2)
+	}
 	if self.Follow_latest == nil {
-		// You typically want 70% fullness for hash maps
-		// Although we wrap around (so we could add up to 2 * RING_QUEUE_SIZE)
-		// before deleting elements, we typically typically are only adding vidoes
-		// 10 at a time, so 1.3 * BUFFER_SIZE would be enough
-		self.Follow_latest = make(map[string]src.Video, src.RING_QUEUE_SIZE * 2)
+		self.Follow_latest = make(map[string]src.Video, count * 2)
 	}
 
 	for i, channel := range list[:count] {
@@ -237,9 +240,8 @@ func is_ASCII(s string) bool {
 ////////////////////////////////////////////////////////////////////////////////
 
 func (self *UIState) Add_and_update_follow(videos []src.Video) {
-	self.Cache.Add(videos)
-	// @VOLATILE: Depends on Update_config seeding Follow_latest with the channel names
 	for _, vid := range videos {
+		self.Cache.Push(vid)
 		// If one of the channels we follow
 		if las, ok := self.Follow_latest[vid.Channel]; ok {
 			vid_close_time := vid.Start_time.Add(vid.Duration)
@@ -268,33 +270,22 @@ type RingBuffer struct {
 	Buffer []src.Video
 	Start int
 	Close int
-	Wrapped bool
 }
-func (self *RingBuffer) Add(videos []src.Video) {
+func (self *RingBuffer) Push(video src.Video) {
 	length := len(self.Buffer)
 
-	//if self.Close >= length {
-	//	for i := 0; i < len(videos); i += 1 {
-	//		delete(self.Latest, self.Buffer[(self.Close + i) % length].Url)
-	//	}
-	//}
-	for _, vid := range videos {
-		// @VOLATILE: Channel_videos requires added batches to be internally sorted. This is sorted at network ingress
-		src.Assert(past.Start_time == vid.Start_time || past.Start_time.Before(vid.Start_time))
-
-		//if _, ok := self.Latest[vid.Url]; ok {
-		//	continue
-		//} else {
-		//	self.Latest[vid.Url] = vid
-		//}
-		self.Buffer[self.Close % length] = vid
-		self.Close += 1
-	}
+	self.Buffer[self.Close % length] = video
+	self.Close += 1
 	if self.Close > length {
 		self.Close = (self.Close % length) + length
 		self.Start = self.Close
 	}
 	self.Start %= length
+}
+
+func (self *RingBuffer) Clear() {
+	self.Start = 0
+	self.Close = 0
 }
 
 func (self *RingBuffer) As_slice() []src.Video {
@@ -304,3 +295,41 @@ func (self *RingBuffer) As_slice() []src.Video {
 		return self.Buffer
 	}
 }
+
+// Like an LRU-cache
+// Implemented on a ring buffer instead of a doubly-linked list
+// Invalidated items are replaced with the default
+type LRU struct {
+	Exists map[string]int
+	RingBuffer
+}
+func (self *LRU) Push(video src.Video) {
+	length := len(self.Buffer)
+
+	to_add := 0
+	// self.Close is always greater than length once we wrap around once
+	if i, ok := self.Exists[video.Url]; ok {
+		self.Buffer[i] = src.Video{} // Invalidate
+	}
+
+	idx := self.Close % length
+	if self.Close >= length {
+		to_add = length
+		past := self.Buffer[idx]
+		delete(self.Exists, past.Url)
+		self.Start += 1
+		self.Start %= length
+	}
+	self.Exists[video.Url] = idx
+	self.Buffer[idx] = video
+	self.Close = ((self.Close + 1) % length) + to_add
+}
+
+func (self *LRU) As_slice() []src.Video {
+	if self.Close <= len(self.Buffer) {
+		return self.Buffer[:self.Close]
+	} else {
+		return self.Buffer
+	}
+}
+

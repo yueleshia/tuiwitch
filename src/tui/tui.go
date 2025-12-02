@@ -179,7 +179,7 @@ func (self *UIState) Interactive() {
 	}
 }
 func (self *UIState) refresh_channels(channels ...string) {
-	for _, channel := range self.Channel_list {
+	for _, channel := range channels {
 		go func() { self.Refresh_queue <- src.Graph_vods(channel) }()
 		go func() { self.Refresh_queue <- src.Scrape_live_status(channel) }()
 	}
@@ -292,10 +292,10 @@ func (self *UIState) channel_swap(channel string) {
 	self.Channel = channel
 	self.Channel_command = self.Channel_command[:0]
 
-	// @VOLATILE: Depends on self.Cache being sorted (per channel) from old to newest
+	self.Channel_videos.Clear()
 	for _, vid := range self.Cache.As_slice() {
 		if vid.Channel == self.Channel {
-			self.Channel_videos.Add([]src.Video{vid})
+			self.Channel_videos.Push(vid)
 		}
 	}
 	slices.SortFunc(self.Channel_videos.As_slice(), src.Sort_videos_by_latest)
@@ -316,7 +316,7 @@ func (self *UIState) channel_input(event term.Event, cancel context.CancelFunc) 
 			return true
 
 		case 'r':
-			self.refresh_channels(self.Channel_list...)
+			self.refresh_channels(self.Channel)
 			
 		case 'h':
 			for i, vid := range self.Follow_videos {

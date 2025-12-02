@@ -212,7 +212,7 @@ func Scrape_live_status(channel string) Result[[]Video] {
 
 		type Obj struct {
 			Type string `json:"@type"`
-			Description string `json:"description"` 
+			Description string `json:"description"`
 			Embed_url string `json:"embedUrl"`
 			Name string `json:"name"`
 			Thumbnail_URL []string `json:"thumbnailUrl"`
