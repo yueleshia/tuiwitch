@@ -138,7 +138,7 @@ func Must[T any](x T, err error) T {
 }
 func Must1(err error) {
 	if err != nil {
-		fmt.Println(err.Error)
+		fmt.Println(err.Error())
 		os.Exit(1)
 	}
 }

@@ -166,6 +166,7 @@ func Scrape_vods(channel string) Result[[]Video] {
 				Duration: close.Sub(start),
 				Is_live: false,
 				Url: x.Url,
+				Chapters: []Chapter{},
 			}
 			idx += 1
 			if idx >= 10 {
@@ -255,6 +256,7 @@ func Scrape_live_status(channel string) Result[[]Video] {
 			Duration: close.Sub(start),
 			Is_live: node.Publication.Is_live_broadcast,
 			Url: channel_url,
+			Chapters: []Chapter{},
 		}, nil
 	}()
 	if err != nil {

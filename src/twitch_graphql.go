@@ -12,9 +12,10 @@ import (
 // See the following:
 // https://github.com/streamlink/streamlink/blob/master/src/streamlink/plugins/twitch.py
 // https://github.com/futo-org/grayjay-plugin-twitch/blob/master/TwitchScript.js
+// https://github.com/SuperSonicHub1/twitch-graphql-api
 
-
-// getChannelPager
+// in grayjay, see getChannelPager
+// I've added game Moments
 var VODS_GRAPHQL_QUERY = strings.ReplaceAll(`query FilterableVideoTower_Videos($channelOwnerLogin: String!, $limit: Int, $cursor: Cursor, $broadcastType: BroadcastType, $videoSort: VideoSort, $options: VideoConnectionOptionsInput) {
     user(login: $channelOwnerLogin) {
         id
@@ -28,12 +29,25 @@ var VODS_GRAPHQL_QUERY = strings.ReplaceAll(`query FilterableVideoTower_Videos($
                     previewThumbnailURL(width: 320, height: 180)
                     publishedAt
                     lengthSeconds
-                    viewCount
+                    game {
+                        name
+                    }
                     owner {
                         id
                         displayName
                         login
                         profileImageURL(width: 50)
+                    }
+                    moments(first: 0, after: null, sort: ASC, types: GAME_CHANGE, momentRequestType: VIDEO_CHAPTER_MARKERS) {
+                        edges {
+                            node {
+                                description
+                                positionMilliseconds
+                            }
+                        }
+                        pageInfo {
+                            hasNextPage
+                        }
                     }
                 }
             }
@@ -82,7 +96,6 @@ func Graph_vods(channel string) Result[[]Video] {
 	}
 
 	ret, err := func() ([]Video, error) {
-		// @TODO: chapters
 		type VideoNode struct {
 			Typename       string `json:"__typename"`
 			Id             string `json:"id"`
@@ -90,13 +103,26 @@ func Graph_vods(channel string) Result[[]Video] {
 			Thumbnail_URL  string `json:"previewThumbnailURL"`
 			Published_at   string `json:"publishedAt"`
 			Length_seconds int    `json:"lengthSeconds"`
-			View_count     int    `json:"viewCount"`
+			Game struct {
+				Name string `json:"name"`
+			} `json:"game"`
 			Owner struct {
 				Id            string `json:"id"`
 				Display_name  string `json:"displayName"`
 				Login         string `json:"login"`
 				Profile_URL   string `json:"profileImageURL"`
 			} `json:"owner"`
+			Moments struct {
+				Edges []struct {
+					Node struct {
+						Description           string        `json:"description"`
+						Position_milliseconds time.Duration `json:"positionMilliseconds"`
+					} `json:"node"`
+				} `json:"edges"`
+				Page_info struct {
+					Has_next_page bool `json:"hasNextPage"`
+				} `json:"pageInfo"`
+			} `json:"moments"`
 		}
 		type VideoEdge struct {
 			Cursor string    `json:"cursor"`
@@ -145,6 +171,19 @@ func Graph_vods(channel string) Result[[]Video] {
 				start = x
 			}
 
+			var chapters []Chapter
+			if len(x.Moments.Edges) == 0 {
+				chapters = []Chapter{Chapter{x.Game.Name, 0}}
+			} else {
+				chapters = make([]Chapter, len(x.Moments.Edges))
+				for j, y := range x.Moments.Edges {
+					chapters[j] = Chapter {
+						Name:     y.Node.Description,
+						Position: y.Node.Position_milliseconds * time.Millisecond,
+					}
+				}
+			}
+
 			videos[idx] = Video {
 				Title: x.Title,
 				Channel: channel,
@@ -154,6 +193,7 @@ func Graph_vods(channel string) Result[[]Video] {
 				Duration: time.Duration(x.Length_seconds) * time.Second,
 				Is_live: false,
 				Url: "https://www.twitch.tv/videos/" + x.Id,
+				Chapters: chapters,
 			}
 			idx += 1
 		}

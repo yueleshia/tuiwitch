@@ -366,8 +366,6 @@ func (self *UIState) channel_input(event term.Event, cancel context.CancelFunc) 
 			}
 
 		default:
-			_, _ = self.Message.WriteString(self.Channel_videos.Buffer[self.Channel_selection].Url)
-			_ = self.Message.WriteByte('\n')
 		}
 	default:
 		self.Message.WriteString(fmt.Sprintf("%d %+v\n", event.Ty, event))
@@ -389,16 +387,23 @@ func (self UIState) channel_render(writer *bufio.Writer) {
 	render_video_list(writer, self.Channel_selection, to_render)
 
 	// Display play time
-	{
-		vid := self.Channel_videos.Buffer[self.Channel_selection]
-		// On live videos hide this selection, because you will be on live
-		if !vid.Is_live && len(self.Channel_command) > 0 {
-			fmt.Fprintf(writer, "\r\n Length (hh:mm:ss): %s\r\n", string(self.Channel_command))
-		}
+	vid := self.Channel_videos.Buffer[self.Channel_selection]
+	// On live videos hide this selection, because you will be on live
+	if !vid.Is_live && len(self.Channel_command) > 0 {
+		fmt.Fprintf(writer, "\r\n Length (hh:mm:ss): %s\r\n", string(self.Channel_command))
 	}
+
 	fmt.Fprintf(writer, "\r\n (q)uit (r)efresh (hjkl) navigate")
 	fmt.Fprintf(writer, "\r\n")
-	fmt.Fprintf(writer, "\r\nui_selection: %d", self.Channel_selection)
+	fmt.Fprintf(writer, "\r\n%s", vid.Url)
+	fmt.Fprintf(writer, "\r\n%s", vid.Title)
+	fmt.Fprintf(writer, "\r\nChapters: ")
+	for i, chapter := range vid.Chapters {
+		if i != 0 {
+			fmt.Fprintf(writer, "%s", " | ")
+		}
+		fmt.Fprintf(writer, "%s", chapter.Name)
+	}
 	fmt.Fprintf(writer, "\r\n")
 	render_message(writer, self.Message.String())
 }

@@ -19,6 +19,11 @@ const ANSI_FG_GREEN = "\x1b[32m"
 const ANSI_FG_CYAN = "\x1b[36m"
 const ANSI_RESET = "\x1b[0m"
 
+type Chapter struct {
+	Name     string
+	Position time.Duration
+}
+
 type Video struct {
 	Title         string
 	Channel       string
@@ -28,6 +33,7 @@ type Video struct {
 	Duration      time.Duration
 	Is_live       bool
 	Url           string
+	Chapters      []Chapter
 }
 
 func Sort_videos_by_latest(a, b Video) int {
